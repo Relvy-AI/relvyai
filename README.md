@@ -39,7 +39,7 @@ cd relvyai
 ### Step 2 - Start the stack
 
 ```bash
-docker compose up -d
+docker compose up -d --pull always
 ```
 
 That's it. All services start with sensible defaults — no configuration needed.
