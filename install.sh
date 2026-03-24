@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+trap 'echo ""; echo -e "  \033[0;31m✘\033[0m Interrupted. Run \033[1m./install.sh status\033[0m to check state or \033[1m./install.sh start\033[0m to recover."; exit 130' INT
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
@@ -72,6 +74,71 @@ open_browser() {
 # ---------------------------------------------------------------------------
 # Pre-flight checks
 # ---------------------------------------------------------------------------
+
+is_port_in_use() {
+    local port="$1"
+    if command -v lsof &>/dev/null; then
+        lsof -i :"$port" -sTCP:LISTEN &>/dev/null
+    elif command -v ss &>/dev/null; then
+        ss -tlnp | grep -q ":${port} "
+    else
+        bash -c "echo >/dev/tcp/127.0.0.1/$port" 2>/dev/null
+    fi
+}
+
+is_our_proxy_running() {
+    $COMPOSE_CMD ps --format json proxy 2>/dev/null | grep -q '"State":"running"'
+}
+
+set_port() {
+    local old_port new_port
+    old_port="$1"
+    new_port="$2"
+    sed -i.bak "s/'${old_port}:8080'/'${new_port}:8080'/" docker-compose.yml && rm -f docker-compose.yml.bak
+    sed -i.bak "s/acl Safe_ports port ${old_port}/acl Safe_ports port ${new_port}/" squid.conf && rm -f squid.conf.bak
+}
+
+ensure_port_available() {
+    local port
+    port="$(get_app_port)"
+
+    if ! is_port_in_use "$port"; then
+        info "Port ${CYAN}${port}${NC} is available"
+        return 0
+    fi
+
+    if is_our_proxy_running; then
+        info "Port ${CYAN}${port}${NC} is in use by Relvy"
+        return 0
+    fi
+
+    warn "Port ${YELLOW}${port}${NC} is already in use by another process"
+
+    while true; do
+        read -rp "  Enter a different port: " new_port
+
+        if [[ -z "$new_port" ]]; then
+            err "Port cannot be empty."
+            continue
+        fi
+
+        if [[ ! "$new_port" =~ ^[0-9]+$ ]] || (( new_port < 1 || new_port > 65535 )); then
+            err "Invalid port number. Must be between 1 and 65535."
+            continue
+        fi
+
+        if is_port_in_use "$new_port"; then
+            err "Port ${new_port} is also in use. Try another."
+            continue
+        fi
+
+        set_port "$port" "$new_port"
+        port="$new_port"
+
+        info "Port updated to ${CYAN}${new_port}${NC}"
+        return 0
+    done
+}
 
 check_docker() {
     if ! command -v docker &>/dev/null; then
@@ -151,6 +218,7 @@ cmd_start() {
     banner
     step "Pre-flight checks"
     check_docker
+    ensure_port_available
 
     step "Pulling latest images..."
     $COMPOSE_CMD pull --quiet
@@ -199,9 +267,12 @@ cmd_restart() {
         banner
         step "Pre-flight checks"
         check_docker
+
         step "Stopping services..."
         $COMPOSE_CMD down
         info "All services stopped"
+
+        ensure_port_available
 
         step "Pulling latest images..."
         $COMPOSE_CMD pull --quiet
@@ -289,6 +360,7 @@ cmd_reset() {
 
     echo ""
     step "Starting fresh..."
+    ensure_port_available
 
     step "Pulling latest images..."
     $COMPOSE_CMD pull --quiet
@@ -306,7 +378,7 @@ cmd_reset() {
 
 cmd_help() {
     banner
-    echo -e "  ${BOLD}Usage:${NC} ./relvy.sh <command> [options]"
+    echo -e "  ${BOLD}Usage:${NC} ./install.sh <command> [options]"
     echo ""
     echo -e "  ${BOLD}Commands:${NC}"
     echo -e "    ${CYAN}start${NC}   [--no-open]   Pull images, start services, open browser"
@@ -319,12 +391,12 @@ cmd_help() {
     echo -e "    ${CYAN}help${NC}                   Show this help message"
     echo ""
     echo -e "  ${BOLD}Examples:${NC}"
-    echo -e "    ${DIM}./relvy.sh start${NC}              Start and open browser"
-    echo -e "    ${DIM}./relvy.sh start --no-open${NC}    Start without opening browser"
-    echo -e "    ${DIM}./relvy.sh logs web${NC}              Follow logs for the web service"
-    echo -e "    ${DIM}./relvy.sh logs web --tail 50${NC}    Last 50 lines from web service"
-    echo -e "    ${DIM}./relvy.sh restart web${NC}         Restart only the web service"
-    echo -e "    ${DIM}./relvy.sh status${NC}             Quick health overview"
+    echo -e "    ${DIM}./install.sh start${NC}              Start and open browser"
+    echo -e "    ${DIM}./install.sh start --no-open${NC}    Start without opening browser"
+    echo -e "    ${DIM}./install.sh logs web${NC}              Follow logs for the web service"
+    echo -e "    ${DIM}./install.sh logs web --tail 50${NC}    Last 50 lines from web service"
+    echo -e "    ${DIM}./install.sh restart web${NC}         Restart only the web service"
+    echo -e "    ${DIM}./install.sh status${NC}             Quick health overview"
     echo ""
 }
 

@@ -39,7 +39,7 @@ cd relvyai
 ### Step 2 - Start the stack
 
 ```bash
-./relvy.sh start
+./install.sh start
 ```
 
 That's it. All services start with sensible defaults — no configuration needed. The script will pull images, wait for all services to be healthy, and open the app in your browser.
@@ -84,29 +84,29 @@ All settings can be overridden by creating a `.env` file next to `docker-compose
 
 ---
 
-## CLI Reference (`relvy.sh`)
+## CLI Reference (`install.sh`)
 
-The `relvy.sh` script is a convenience wrapper around Docker Compose that handles health checks, pre-flight validation, and browser launching.
+The `install.sh` script is a convenience wrapper around Docker Compose that handles health checks, pre-flight validation, and browser launching.
 
 | Command | Description |
 |---|---|
-| `./relvy.sh start` | Pull images, start all services, open browser |
-| `./relvy.sh start --no-open` | Same as above, without opening the browser |
-| `./relvy.sh stop` | Stop all services |
-| `./relvy.sh restart` | Full restart (stop, pull, start) |
-| `./relvy.sh restart <service>` | Restart a single service (`web`, `celery-worker`, or `proxy`) |
-| `./relvy.sh status` | Show health of all services |
-| `./relvy.sh logs [service] [opts]` | Tail logs for all or a specific service |
-| `./relvy.sh destroy` | Tear down everything including data |
-| `./relvy.sh reset` | Destroy all containers, volumes, and data, then start fresh |
-| `./relvy.sh help` | Show available commands |
+| `./install.sh start` | Pull images, start all services, open browser |
+| `./install.sh start --no-open` | Same as above, without opening the browser |
+| `./install.sh stop` | Stop all services |
+| `./install.sh restart` | Full restart (stop, pull, start) |
+| `./install.sh restart <service>` | Restart a single service (`web`, `celery-worker`, or `proxy`) |
+| `./install.sh status` | Show health of all services |
+| `./install.sh logs [service] [opts]` | Tail logs for all or a specific service |
+| `./install.sh destroy` | Tear down everything including data |
+| `./install.sh reset` | Destroy all containers, volumes, and data, then start fresh |
+| `./install.sh help` | Show available commands |
 
 **Examples:**
 
 ```bash
-./relvy.sh logs web --tail 50      # Last 50 lines from web
-./relvy.sh logs celery-worker      # Follow celery logs
-./relvy.sh restart web             # Restart only the web service
+./install.sh logs web --tail 50      # Last 50 lines from web
+./install.sh logs celery-worker      # Follow celery logs
+./install.sh restart web             # Restart only the web service
 ```
 
 > You can still use `docker compose` commands directly if you prefer.
@@ -173,7 +173,7 @@ Add `acl allowed_domains` lines **above** the access rules. Pick only what you u
 ### 3. Restart the proxy
 
 ```bash
-./relvy.sh restart proxy
+./install.sh restart proxy
 ```
 
 ### Example: restricted squid.conf (OpenAI + Datadog + Slack)
@@ -226,8 +226,8 @@ cache_log stdio:/dev/stderr
 <summary><strong>Services fail to start</strong></summary>
 
 ```bash
-./relvy.sh status
-./relvy.sh logs <service-name>
+./install.sh status
+./install.sh logs <service-name>
 ```
 
 </details>
@@ -238,13 +238,13 @@ cache_log stdio:/dev/stderr
 If integrations fail with connection errors, the domain is likely missing from `squid.conf`:
 
 ```bash
-./relvy.sh logs proxy | grep DENIED
+./install.sh logs proxy | grep DENIED
 ```
 
 Add the missing domain and restart the proxy:
 
 ```bash
-./relvy.sh restart proxy
+./install.sh restart proxy
 ```
 
 </details>
@@ -253,8 +253,8 @@ Add the missing domain and restart the proxy:
 <summary><strong>Cannot access the web UI</strong></summary>
 
 - Verify the configured port is not in use by another process
-- Check service health: `./relvy.sh status`
-- Review proxy logs: `./relvy.sh logs proxy`
+- Check service health: `./install.sh status`
+- Review proxy logs: `./install.sh logs proxy`
 
 </details>
 
