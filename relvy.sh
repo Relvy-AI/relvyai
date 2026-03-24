@@ -268,7 +268,7 @@ cmd_logs() {
     $COMPOSE_CMD logs -f "$@"
 }
 
-cmd_reset() {
+cmd_destroy() {
     banner
     echo -e "  ${RED}${BOLD}WARNING:${NC} This will destroy all containers, networks, and volumes."
     echo -e "  ${RED}All data in the database will be permanently lost.${NC}"
@@ -282,10 +282,26 @@ cmd_reset() {
     step "Tearing down everything..."
     $COMPOSE_CMD down -v --remove-orphans
     info "All containers, networks, and volumes removed"
+}
+
+cmd_reset() {
+    cmd_destroy
 
     echo ""
     step "Starting fresh..."
-    cmd_start --no-open
+
+    step "Pulling latest images..."
+    $COMPOSE_CMD pull --quiet
+
+    step "Starting services..."
+    $COMPOSE_CMD up -d
+
+    if wait_for_healthy; then
+        local url
+        url="$(get_app_url)"
+        echo ""
+        info "${BOLD}${APP_NAME} is ready at ${CYAN}${url}${NC}"
+    fi
 }
 
 cmd_help() {
@@ -298,6 +314,7 @@ cmd_help() {
     echo -e "    ${CYAN}restart${NC} [service]      Restart all services, or a specific one"
     echo -e "    ${CYAN}status${NC}                 Show status of all services"
     echo -e "    ${CYAN}logs${NC}    [service] [opts] Tail logs (all or specific service)"
+    echo -e "    ${CYAN}destroy${NC}                Tear down everything including data"
     echo -e "    ${CYAN}reset${NC}                  Full teardown (including data) and fresh start"
     echo -e "    ${CYAN}help${NC}                   Show this help message"
     echo ""
@@ -325,6 +342,7 @@ main() {
         restart) cmd_restart "$@" ;;
         status)  cmd_status ;;
         logs)    cmd_logs "$@" ;;
+        destroy) cmd_destroy ;;
         reset)   cmd_reset ;;
         help|--help|-h) cmd_help ;;
         *)

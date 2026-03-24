@@ -97,6 +97,7 @@ The `relvy.sh` script is a convenience wrapper around Docker Compose that handle
 | `./relvy.sh restart <service>` | Restart a single service (`web`, `celery-worker`, or `proxy`) |
 | `./relvy.sh status` | Show health of all services |
 | `./relvy.sh logs [service] [opts]` | Tail logs for all or a specific service |
+| `./relvy.sh destroy` | Tear down everything including data |
 | `./relvy.sh reset` | Destroy all containers, volumes, and data, then start fresh |
 | `./relvy.sh help` | Show available commands |
 
