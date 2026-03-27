@@ -39,20 +39,12 @@ cd relvyai
 ### Step 2 - Start the stack
 
 ```bash
-docker compose up -d
+./install.sh start
 ```
 
-That's it. All services start with sensible defaults — no configuration needed.
+That's it. All services start with sensible defaults — no configuration needed. The script will pull images, wait for all services to be healthy, and open the app in your browser.
 
-> **Relvy will be available at [http://localhost:80](http://localhost:80)** once all services are healthy (typically under a minute).
-
-To check status:
-
-```bash
-docker compose ps
-```
-
-`migrations` and `setup` will show as exited (0) after first boot. All other services should be healthy/running.
+> **Relvy will be available at [http://localhost:5001](http://localhost:5001)** once all services are healthy (typically under a minute).
 
 ---
 
@@ -92,18 +84,32 @@ All settings can be overridden by creating a `.env` file next to `docker-compose
 
 ---
 
-## Day-to-Day Operations
+## CLI Reference (`install.sh`)
+
+The `install.sh` script is a convenience wrapper around Docker Compose that handles health checks, pre-flight validation, and browser launching.
+
+| Command | Description |
+|---|---|
+| `./install.sh start` | Pull images, start all services, open browser |
+| `./install.sh start --no-open` | Same as above, without opening the browser |
+| `./install.sh stop` | Stop all services |
+| `./install.sh restart` | Full restart (stop, pull, start) |
+| `./install.sh restart <service>` | Restart a single service (`web`, `celery-worker`, or `proxy`) |
+| `./install.sh status` | Show health of all services |
+| `./install.sh logs [service] [opts]` | Tail logs for all or a specific service |
+| `./install.sh destroy` | Tear down everything including data |
+| `./install.sh reset` | Destroy all containers, volumes, and data, then start fresh |
+| `./install.sh help` | Show available commands |
+
+**Examples:**
 
 ```bash
-# Restart everything
-docker compose restart
-
-# Stop the stack
-docker compose down
-
-# Stop and delete all data (destructive)
-docker compose down -v
+./install.sh logs web --tail 50      # Last 50 lines from web
+./install.sh logs celery-worker      # Follow celery logs
+./install.sh restart web             # Restart only the web service
 ```
+
+> You can still use `docker compose` commands directly if you prefer.
 
 ---
 
@@ -167,7 +173,7 @@ Add `acl allowed_domains` lines **above** the access rules. Pick only what you u
 ### 3. Restart the proxy
 
 ```bash
-docker compose restart proxy
+./install.sh restart proxy
 ```
 
 ### Example: restricted squid.conf (OpenAI + Datadog + Slack)
@@ -220,8 +226,8 @@ cache_log stdio:/dev/stderr
 <summary><strong>Services fail to start</strong></summary>
 
 ```bash
-docker compose logs <service-name>
-docker compose exec db pg_isready -U relvy
+./install.sh status
+./install.sh logs <service-name>
 ```
 
 </details>
@@ -232,13 +238,13 @@ docker compose exec db pg_isready -U relvy
 If integrations fail with connection errors, the domain is likely missing from `squid.conf`:
 
 ```bash
-docker compose logs proxy | grep DENIED
+./install.sh logs proxy | grep DENIED
 ```
 
 Add the missing domain and restart the proxy:
 
 ```bash
-docker compose restart proxy
+./install.sh restart proxy
 ```
 
 </details>
@@ -246,9 +252,9 @@ docker compose restart proxy
 <details>
 <summary><strong>Cannot access the web UI</strong></summary>
 
-- Verify port 80 is not in use by another process
-- Check that `proxy` and `web` are healthy: `docker compose ps`
-- Review proxy logs: `docker compose logs proxy`
+- Verify the configured port is not in use by another process
+- Check service health: `./install.sh status`
+- Review proxy logs: `./install.sh logs proxy`
 
 </details>
 
