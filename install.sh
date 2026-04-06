@@ -35,6 +35,8 @@ fi
 HEALTH_TIMEOUT=120
 SERVICES_CORE=(db redis celery-worker web proxy)
 SERVICES_RESTARTABLE=(celery-worker web proxy)
+OVERRIDE_FILE="docker-compose.override.yml"
+REPOS_CONTAINER_ROOT="/repos"
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -69,6 +71,119 @@ open_browser() {
         Linux)   xdg-open "$url" 2>/dev/null ;;
         MINGW*|MSYS*|CYGWIN*) start "$url" 2>/dev/null ;;
     esac
+}
+
+# ---------------------------------------------------------------------------
+# Code directory management
+# ---------------------------------------------------------------------------
+
+generate_override() {
+    local code_dirs=("$@")
+
+    if [[ ${#code_dirs[@]} -eq 0 ]]; then
+        # No code dirs — remove override if it only had code mounts
+        rm -f "$OVERRIDE_FILE"
+        return
+    fi
+
+    local volumes=""
+    for dir_path in "${code_dirs[@]}"; do
+        local dir_name
+        dir_name="$(basename "$dir_path")"
+        volumes+="      - ${dir_path}:${REPOS_CONTAINER_ROOT}/${dir_name}:ro"$'\n'
+    done
+
+    cat > "$OVERRIDE_FILE" <<EOF
+services:
+  celery-worker:
+    environment:
+      - CODE_REPOS_ROOT=${REPOS_CONTAINER_ROOT}
+    volumes:
+${volumes}
+  web:
+    environment:
+      - CODE_REPOS_ROOT=${REPOS_CONTAINER_ROOT}
+    volumes:
+${volumes}
+EOF
+
+    info "Generated ${BOLD}${OVERRIDE_FILE}${NC} with ${#code_dirs[@]} code director$([ ${#code_dirs[@]} -eq 1 ] && echo "y" || echo "ies")"
+}
+
+collect_code_dirs_interactive() {
+    echo ""
+    echo -e "  ${BOLD}Local Code Repositories${NC}"
+    echo -e "  ${DIM}Mount local code directories so Relvy can analyze your repositories.${NC}"
+    echo -e "  ${DIM}Press Enter to skip, or 'y' to add directories.${NC}"
+    echo ""
+    read -rp "  Add local code directories? [y/N] " add_code
+
+    case "$add_code" in
+        y|Y) ;;
+        *) return ;;
+    esac
+
+    echo ""
+    echo -e "  ${DIM}Enter directory paths one at a time. Press Enter on an empty line when done.${NC}"
+    echo ""
+
+    while true; do
+        read -rp "  Directory path (or Enter to finish): " dir_path
+
+        if [[ -z "$dir_path" ]]; then
+            break
+        fi
+
+        # Expand ~ and resolve to absolute path
+        dir_path="${dir_path/#\~/$HOME}"
+        dir_path="$(cd "$dir_path" 2>/dev/null && pwd || echo "$dir_path")"
+
+        if [[ ! -d "$dir_path" ]]; then
+            err "Directory not found: ${dir_path}"
+            continue
+        fi
+
+        # Count git repos inside
+        local repo_count
+        repo_count=$(find "$dir_path" -maxdepth 3 -name ".git" -type d 2>/dev/null | wc -l | tr -d ' ')
+
+        if [[ "$repo_count" -eq 0 ]]; then
+            warn "No git repositories found in ${dir_path} (searched up to depth 3)"
+            read -rp "  Add it anyway? [y/N] " add_anyway
+            case "$add_anyway" in
+                y|Y) ;;
+                *) continue ;;
+            esac
+        else
+            info "Found ${CYAN}${repo_count}${NC} git repositor$([ "$repo_count" -eq 1 ] && echo "y" || echo "ies") in ${CYAN}${dir_path}${NC}"
+        fi
+
+        CODE_DIRS+=("$dir_path")
+    done
+}
+
+parse_code_dirs_from_args() {
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --code-dir)
+                if [[ -z "${2:-}" ]]; then
+                    err "--code-dir requires a path argument"
+                    exit 1
+                fi
+                local dir_path="${2/#\~/$HOME}"
+                dir_path="$(cd "$dir_path" 2>/dev/null && pwd || echo "$dir_path")"
+                if [[ ! -d "$dir_path" ]]; then
+                    err "Directory not found: ${dir_path}"
+                    exit 1
+                fi
+                CODE_DIRS+=("$dir_path")
+                shift 2
+                ;;
+            *)
+                shift
+                ;;
+        esac
+    done
 }
 
 # ---------------------------------------------------------------------------
@@ -211,14 +326,29 @@ print_service_health() {
 
 cmd_start() {
     local no_open=false
+    CODE_DIRS=()
+
+    # Parse --code-dir and --no-open from args
     for arg in "$@"; do
         [[ "$arg" == "--no-open" ]] && no_open=true
     done
+    parse_code_dirs_from_args "$@"
 
     banner
     step "Pre-flight checks"
     check_docker
     ensure_port_available
+
+    # If no --code-dir provided, ask interactively
+    if [[ ${#CODE_DIRS[@]} -eq 0 ]]; then
+        collect_code_dirs_interactive
+    fi
+
+    # Generate override if code dirs provided
+    if [[ ${#CODE_DIRS[@]} -gt 0 ]]; then
+        step "Configuring code directories..."
+        generate_override "${CODE_DIRS[@]}"
+    fi
 
     step "Pulling latest images..."
     $COMPOSE_CMD pull --quiet
@@ -231,6 +361,17 @@ cmd_start() {
         url="$(get_app_url)"
         echo ""
         info "${BOLD}${APP_NAME} is ready at ${CYAN}${url}${NC}"
+
+        if [[ ${#CODE_DIRS[@]} -gt 0 ]]; then
+            local total_repos=0
+            for dir_path in "${CODE_DIRS[@]}"; do
+                local count
+                count=$(find "$dir_path" -maxdepth 3 -name ".git" -type d 2>/dev/null | wc -l | tr -d ' ')
+                total_repos=$((total_repos + count))
+            done
+            info "${CYAN}${total_repos}${NC} code repositor$([ "$total_repos" -eq 1 ] && echo "y" || echo "ies") available for analysis"
+        fi
+
         if ! $no_open; then
             info "Opening browser..."
             open_browser "$url"
@@ -319,6 +460,18 @@ cmd_status() {
         printf "  %b %-20s %b\n" "$icon" "$svc" "$status_text"
     done
 
+    # Show code directory info
+    if [[ -f "$OVERRIDE_FILE" ]]; then
+        local mount_count
+        mount_count=$(grep -c "${REPOS_CONTAINER_ROOT}/" "$OVERRIDE_FILE" 2>/dev/null | head -1)
+        # Each dir appears twice (celery + web), so divide by 2
+        mount_count=$(( mount_count / 2 ))
+        if [[ "$mount_count" -gt 0 ]]; then
+            echo ""
+            info "${CYAN}${mount_count}${NC} code director$([ "$mount_count" -eq 1 ] && echo "y" || echo "ies") mounted"
+        fi
+    fi
+
     local url
     url="$(get_app_url)"
     echo ""
@@ -352,6 +505,7 @@ cmd_destroy() {
 
     step "Tearing down everything..."
     $COMPOSE_CMD down -v --remove-orphans
+    rm -f "$OVERRIDE_FILE"
     info "All containers, networks, and volumes removed"
 }
 
@@ -381,22 +535,27 @@ cmd_help() {
     echo -e "  ${BOLD}Usage:${NC} ./install.sh <command> [options]"
     echo ""
     echo -e "  ${BOLD}Commands:${NC}"
-    echo -e "    ${CYAN}start${NC}   [--no-open]   Pull images, start services, open browser"
-    echo -e "    ${CYAN}stop${NC}                   Stop all services"
-    echo -e "    ${CYAN}restart${NC} [service]      Restart all services, or a specific one"
-    echo -e "    ${CYAN}status${NC}                 Show status of all services"
-    echo -e "    ${CYAN}logs${NC}    [service] [opts] Tail logs (all or specific service)"
-    echo -e "    ${CYAN}destroy${NC}                Tear down everything including data"
-    echo -e "    ${CYAN}reset${NC}                  Full teardown (including data) and fresh start"
-    echo -e "    ${CYAN}help${NC}                   Show this help message"
+    echo -e "    ${CYAN}start${NC}   [--no-open] [--code-dir <path>]   Pull images, start services, open browser"
+    echo -e "    ${CYAN}stop${NC}                                       Stop all services"
+    echo -e "    ${CYAN}restart${NC} [service]                          Restart all services, or a specific one"
+    echo -e "    ${CYAN}status${NC}                                     Show status of all services"
+    echo -e "    ${CYAN}logs${NC}    [service] [opts]                   Tail logs (all or specific service)"
+    echo -e "    ${CYAN}destroy${NC}                                    Tear down everything including data"
+    echo -e "    ${CYAN}reset${NC}                                      Full teardown (including data) and fresh start"
+    echo -e "    ${CYAN}help${NC}                                       Show this help message"
+    echo ""
+    echo -e "  ${BOLD}Options:${NC}"
+    echo -e "    ${CYAN}--code-dir <path>${NC}   Mount a local code directory (can be repeated)"
+    echo -e "    ${CYAN}--no-open${NC}           Don't open browser after start"
     echo ""
     echo -e "  ${BOLD}Examples:${NC}"
-    echo -e "    ${DIM}./install.sh start${NC}              Start and open browser"
-    echo -e "    ${DIM}./install.sh start --no-open${NC}    Start without opening browser"
-    echo -e "    ${DIM}./install.sh logs web${NC}              Follow logs for the web service"
-    echo -e "    ${DIM}./install.sh logs web --tail 50${NC}    Last 50 lines from web service"
-    echo -e "    ${DIM}./install.sh restart web${NC}         Restart only the web service"
-    echo -e "    ${DIM}./install.sh status${NC}             Quick health overview"
+    echo -e "    ${DIM}./install.sh start${NC}                                       Start with interactive setup"
+    echo -e "    ${DIM}./install.sh start --code-dir ~/projects${NC}                 Mount a code directory"
+    echo -e "    ${DIM}./install.sh start --code-dir ~/work --code-dir ~/oss${NC}    Mount multiple directories"
+    echo -e "    ${DIM}./install.sh start --no-open${NC}                             Start without opening browser"
+    echo -e "    ${DIM}./install.sh logs web${NC}                                    Follow logs for the web service"
+    echo -e "    ${DIM}./install.sh restart web${NC}                                 Restart only the web service"
+    echo -e "    ${DIM}./install.sh status${NC}                                      Quick health overview"
     echo ""
 }
 
