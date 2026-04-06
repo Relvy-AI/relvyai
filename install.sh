@@ -96,9 +96,13 @@ generate_override() {
     cat > "$OVERRIDE_FILE" <<EOF
 services:
   celery-worker:
+    environment:
+      - CODE_REPOS_ROOT=${REPOS_CONTAINER_ROOT}
     volumes:
 ${volumes}
   web:
+    environment:
+      - CODE_REPOS_ROOT=${REPOS_CONTAINER_ROOT}
     volumes:
 ${volumes}
 EOF
@@ -107,7 +111,6 @@ EOF
 }
 
 collect_code_dirs_interactive() {
-    local -n _dirs=$1
     echo ""
     echo -e "  ${BOLD}Local Code Repositories${NC}"
     echo -e "  ${DIM}Mount local code directories so Relvy can analyze your repositories.${NC}"
@@ -115,9 +118,10 @@ collect_code_dirs_interactive() {
     echo ""
     read -rp "  Add local code directories? [y/N] " add_code
 
-    if [[ "${add_code,,}" != "y" ]]; then
-        return
-    fi
+    case "$add_code" in
+        y|Y) ;;
+        *) return ;;
+    esac
 
     echo ""
     echo -e "  ${DIM}Enter directory paths one at a time. Press Enter on an empty line when done.${NC}"
@@ -146,20 +150,19 @@ collect_code_dirs_interactive() {
         if [[ "$repo_count" -eq 0 ]]; then
             warn "No git repositories found in ${dir_path} (searched up to depth 3)"
             read -rp "  Add it anyway? [y/N] " add_anyway
-            if [[ "${add_anyway,,}" != "y" ]]; then
-                continue
-            fi
+            case "$add_anyway" in
+                y|Y) ;;
+                *) continue ;;
+            esac
         else
             info "Found ${CYAN}${repo_count}${NC} git repositor$([ "$repo_count" -eq 1 ] && echo "y" || echo "ies") in ${CYAN}${dir_path}${NC}"
         fi
 
-        _dirs+=("$dir_path")
+        CODE_DIRS+=("$dir_path")
     done
 }
 
 parse_code_dirs_from_args() {
-    local -n _dirs=$1
-    shift
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --code-dir)
@@ -173,7 +176,7 @@ parse_code_dirs_from_args() {
                     err "Directory not found: ${dir_path}"
                     exit 1
                 fi
-                _dirs+=("$dir_path")
+                CODE_DIRS+=("$dir_path")
                 shift 2
                 ;;
             *)
@@ -323,14 +326,13 @@ print_service_health() {
 
 cmd_start() {
     local no_open=false
-    local code_dirs=()
+    CODE_DIRS=()
 
     # Parse --code-dir and --no-open from args
-    local args=("$@")
-    for arg in "${args[@]}"; do
+    for arg in "$@"; do
         [[ "$arg" == "--no-open" ]] && no_open=true
     done
-    parse_code_dirs_from_args code_dirs "$@"
+    parse_code_dirs_from_args "$@"
 
     banner
     step "Pre-flight checks"
@@ -338,14 +340,14 @@ cmd_start() {
     ensure_port_available
 
     # If no --code-dir provided, ask interactively
-    if [[ ${#code_dirs[@]} -eq 0 ]]; then
-        collect_code_dirs_interactive code_dirs
+    if [[ ${#CODE_DIRS[@]} -eq 0 ]]; then
+        collect_code_dirs_interactive
     fi
 
     # Generate override if code dirs provided
-    if [[ ${#code_dirs[@]} -gt 0 ]]; then
+    if [[ ${#CODE_DIRS[@]} -gt 0 ]]; then
         step "Configuring code directories..."
-        generate_override "${code_dirs[@]}"
+        generate_override "${CODE_DIRS[@]}"
     fi
 
     step "Pulling latest images..."
@@ -360,9 +362,9 @@ cmd_start() {
         echo ""
         info "${BOLD}${APP_NAME} is ready at ${CYAN}${url}${NC}"
 
-        if [[ ${#code_dirs[@]} -gt 0 ]]; then
+        if [[ ${#CODE_DIRS[@]} -gt 0 ]]; then
             local total_repos=0
-            for dir_path in "${code_dirs[@]}"; do
+            for dir_path in "${CODE_DIRS[@]}"; do
                 local count
                 count=$(find "$dir_path" -maxdepth 3 -name ".git" -type d 2>/dev/null | wc -l | tr -d ' ')
                 total_repos=$((total_repos + count))
