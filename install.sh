@@ -87,9 +87,17 @@ generate_override() {
     fi
 
     local volumes=""
+    local used_names=""
     for dir_path in "${code_dirs[@]}"; do
         local dir_name
         dir_name="$(basename "$dir_path")"
+        # Avoid collisions if two dirs have the same basename
+        if echo "$used_names" | grep -qx "$dir_name"; then
+            local parent
+            parent="$(basename "$(dirname "$dir_path")")"
+            dir_name="${parent}_${dir_name}"
+        fi
+        used_names="${used_names}${dir_name}"$'\n'
         volumes+="      - ${dir_path}:${REPOS_CONTAINER_ROOT}/${dir_name}:ro"$'\n'
     done
 
@@ -339,15 +347,21 @@ cmd_start() {
     check_docker
     ensure_port_available
 
-    # If no --code-dir provided, ask interactively
-    if [[ ${#CODE_DIRS[@]} -eq 0 ]]; then
-        collect_code_dirs_interactive
-    fi
-
-    # Generate override if code dirs provided
     if [[ ${#CODE_DIRS[@]} -gt 0 ]]; then
         step "Configuring code directories..."
         generate_override "${CODE_DIRS[@]}"
+    elif [[ -f "$OVERRIDE_FILE" ]] && grep -q "CODE_REPOS_ROOT" "$OVERRIDE_FILE" 2>/dev/null; then
+        step "Using existing code directories"
+        grep -oE '^\s+- (/[^:]+):' "$OVERRIDE_FILE" 2>/dev/null | sed 's/^[[:space:]]*- //;s/:$//' | sort -u | while read -r dir; do
+            info "$dir"
+        done
+        echo -e "  ${DIM}Use --code-dir to change${NC}"
+    else
+        collect_code_dirs_interactive
+        if [[ ${#CODE_DIRS[@]} -gt 0 ]]; then
+            step "Configuring code directories..."
+            generate_override "${CODE_DIRS[@]}"
+        fi
     fi
 
     step "Pulling latest images..."
