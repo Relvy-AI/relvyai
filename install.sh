@@ -364,6 +364,8 @@ cmd_start() {
         fi
     fi
 
+    export SERVER_HOSTNAME="${SERVER_HOSTNAME:-$(get_app_url)}"
+
     step "Pulling latest images..."
     $COMPOSE_CMD pull --quiet
 
@@ -428,6 +430,8 @@ cmd_restart() {
         info "All services stopped"
 
         ensure_port_available
+
+        export SERVER_HOSTNAME="${SERVER_HOSTNAME:-$(get_app_url)}"
 
         step "Pulling latest images..."
         $COMPOSE_CMD pull --quiet
@@ -529,6 +533,8 @@ cmd_reset() {
     echo ""
     step "Starting fresh..."
     ensure_port_available
+
+    export SERVER_HOSTNAME="${SERVER_HOSTNAME:-$(get_app_url)}"
 
     step "Pulling latest images..."
     $COMPOSE_CMD pull --quiet
